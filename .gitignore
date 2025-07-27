@@ -1,2 +1,4 @@
+# Archivos sensibles y de entorno
 .env
+get_firebase_token.py
 cifrato-617a3-firebase-adminsdk-fbsvc-551b2e46e6.json
