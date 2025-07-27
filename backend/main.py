@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 from typing import List, Literal
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from firebase_admin import credentials, initialize_app, auth as firebase_auth
@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 import openai
+import PyPDF2
+import xml.etree.ElementTree as ET
+from io import BytesIO
 
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
@@ -82,6 +85,71 @@ class InvoiceData(BaseModel):
     invoice_date: str  # YYYY-MM-DD
     supplier_name: str
 
+# --- Funciones de extracción de contenido ---
+def extract_text_from_pdf(file_content: bytes) -> str:
+    """Extrae texto de un archivo PDF."""
+    try:
+        logger.info("Procesando archivo PDF...")
+        pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+        text_content = ""
+        
+        for page_num, page in enumerate(pdf_reader.pages):
+            page_text = page.extract_text()
+            text_content += f"\n--- Página {page_num + 1} ---\n{page_text}"
+        
+        logger.info(f"Texto extraído de {len(pdf_reader.pages)} páginas del PDF")
+        return text_content
+    except Exception as e:
+        logger.error(f"Error al procesar PDF: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error al procesar el archivo PDF: {str(e)}"
+        )
+
+def extract_text_from_xml(file_content: bytes) -> str:
+    """Extrae texto de un archivo XML."""
+    try:
+        logger.info("Procesando archivo XML...")
+        xml_content = file_content.decode('utf-8')
+        root = ET.fromstring(xml_content)
+        
+        # Intentar extraer elementos clave del XML
+        extracted_text = ""
+        
+        # Buscar elementos comunes en facturas XML
+        key_elements = [
+            'Invoice', 'Factura', 'InvoiceNumber', 'InvoiceDate', 'Total',
+            'Supplier', 'Customer', 'Items', 'Conceptos', 'SubTotal',
+            'Tax', 'Amount', 'Description', 'Quantity', 'UnitPrice'
+        ]
+        
+        for element in key_elements:
+            for elem in root.findall(f'.//{element}'):
+                if elem.text and elem.text.strip():
+                    extracted_text += f"{element}: {elem.text.strip()}\n"
+        
+        # Si no se encontraron elementos específicos, extraer todo el texto
+        if not extracted_text.strip():
+            logger.info("No se encontraron elementos específicos, extrayendo todo el texto del XML")
+            for elem in root.iter():
+                if elem.text and elem.text.strip():
+                    extracted_text += f"{elem.tag}: {elem.text.strip()}\n"
+        
+        logger.info("Texto extraído del XML exitosamente")
+        return extracted_text if extracted_text.strip() else xml_content
+    except ET.ParseError as e:
+        logger.error(f"Error al parsear XML: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error al parsear el archivo XML: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Error al procesar XML: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error al procesar el archivo XML: {str(e)}"
+        )
+
 # --- LLM Processing Function ---
 async def process_invoice_with_llm(invoice_content: str) -> InvoiceData:
     try:
@@ -116,23 +184,45 @@ async def process_invoice_with_llm(invoice_content: str) -> InvoiceData:
         logger.error(f"Error inesperado al procesar la factura: {e}")
         raise
 
-# --- Nuevo endpoint para procesamiento de facturas ---
-from fastapi import Body
-
+# --- Endpoint actualizado para procesamiento de archivos ---
 @app.post("/process-invoice", response_model=InvoiceData)
 async def process_invoice(
-    invoice_content: str = Body(..., embed=True),
+    file: UploadFile = File(...),
     user: dict = Depends(verify_token)
 ):
     try:
+        # Verificar tipo de archivo
+        if file.content_type not in ["application/pdf", "application/xml", "text/xml"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se aceptan archivos PDF o XML. Tipos permitidos: application/pdf, application/xml, text/xml"
+            )
+        
+        # Leer contenido del archivo
+        file_content = await file.read()
+        
+        # Extraer texto según el tipo de archivo
+        if file.content_type == "application/pdf":
+            invoice_content = extract_text_from_pdf(file_content)
+        else:  # XML
+            invoice_content = extract_text_from_xml(file_content)
+        
+        logger.info(f"Contenido extraído del archivo {file.filename} ({file.content_type})")
+        
+        # Procesar con LLM
         invoice_data = await process_invoice_with_llm(invoice_content)
         return invoice_data
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except openai.error.OpenAIError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al procesar la factura con LLM: {e}"
         )
     except Exception as e:
+        logger.error(f"Error inesperado: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado: {e}"
