@@ -2,3 +2,50 @@
 .env
 get_firebase_token.py
 cifrato-617a3-firebase-adminsdk-fbsvc-551b2e46e6.json
+
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Archivos de caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Archivos de distribución
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de logs
+*.log
+
+# Archivos de prueba (opcional)
+test_*.pdf
+test_*.xml
