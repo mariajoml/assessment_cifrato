@@ -1,6 +1,9 @@
 import logging
+import datetime
+import pytz
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from firebase_admin import firestore
 # Importar módulos personalizados
 from backend.auth import verify_token
 from backend.text_extractor import text_extractor
@@ -9,6 +12,14 @@ from backend.llm_processor import process_invoice_with_llm, InvoiceData
 # Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Inicializar cliente de Firestore
+try:
+    db = firestore.client()
+    logger.info("Cliente de Firestore inicializado correctamente.")
+except Exception as e:
+    logger.error(f"Error al inicializar Firestore: {e}")
+    db = None
 
 app = FastAPI(
     title="Invoice Processing API",
@@ -75,6 +86,26 @@ async def process_invoice(
         
         # Agregar información del archivo procesado
         invoice_data.file_name = file.filename
+        
+        # Guardar datos en Firestore
+        try:
+            if db is not None:
+                # Preparar datos para Firestore
+                invoice_dict = invoice_data.model_dump()
+                invoice_dict.update({
+                    "uid": user.get("uid"),
+                    "timestamp": datetime.datetime.now(pytz.utc).isoformat(),
+                    "uploaded_at": datetime.datetime.now(pytz.utc).isoformat()
+                })
+                
+                # Guardar en colección 'invoices'
+                doc_ref = db.collection('invoices').add(invoice_dict)
+                logger.info(f"Invoice saved to Firestore with document ID: {doc_ref[1].id}")
+            else:
+                logger.warning("Firestore no está disponible, saltando guardado de datos.")
+        except Exception as e:
+            logger.error(f"Failed to save invoice to Firestore: {e}")
+            # No bloquear la respuesta si el guardado falla
         
         return invoice_data
         
