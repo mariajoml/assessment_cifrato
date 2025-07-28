@@ -4,6 +4,7 @@ import logging
 from typing import List, Literal
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from firebase_admin import credentials, initialize_app, auth as firebase_auth
 from firebase_admin.auth import InvalidIdTokenError
@@ -43,6 +44,15 @@ except Exception as e:
     raise ValueError(f"No se pudo inicializar Firebase Admin SDK: {e}")
 
 app = FastAPI()
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -153,6 +163,13 @@ def extract_text_from_xml(file_content: bytes) -> str:
 # --- LLM Processing Function ---
 async def process_invoice_with_llm(invoice_content: str) -> InvoiceData:
     try:
+        # Limitar el contenido para evitar exceder el contexto
+        # GPT-3.5-turbo tiene un límite de ~16k tokens, reservamos espacio para el prompt
+        max_chars = 12000  # Aproximadamente 3000 tokens
+        if len(invoice_content) > max_chars:
+            logger.warning(f"Contenido demasiado largo ({len(invoice_content)} chars), truncando a {max_chars} chars")
+            invoice_content = invoice_content[:max_chars] + "\n\n[CONTENIDO TRUNCADO...]"
+        
         # Inicializar el modelo LLM
         llm = ChatOpenAI(
             openai_api_key=OPENAI_API_KEY,
@@ -177,11 +194,8 @@ async def process_invoice_with_llm(invoice_content: str) -> InvoiceData:
         chain = prompt | llm.with_structured_output(InvoiceData)
         result = await chain.ainvoke({"invoice_content": invoice_content})
         return result
-    except openai.error.OpenAIError as e:
-        logger.error(f"Error de OpenAI al procesar la factura: {e}")
-        raise
     except Exception as e:
-        logger.error(f"Error inesperado al procesar la factura: {e}")
+        logger.error(f"Error al procesar la factura: {e}")
         raise
 
 # --- Endpoint actualizado para procesamiento de archivos ---
@@ -216,14 +230,9 @@ async def process_invoice(
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
-    except openai.error.OpenAIError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al procesar la factura con LLM: {e}"
-        )
     except Exception as e:
         logger.error(f"Error inesperado: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado: {e}"
+            detail=f"Error al procesar la factura: {str(e)}"
         ) 
