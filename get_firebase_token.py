@@ -1,10 +1,10 @@
 import requests
 import json
 
-# Reemplaza estos valores por los de tu proyecto y usuario
-API_KEY = "AIzaSyB3pFGHqcsSiQJ95DF4rgXSQHiCRNQ6eCo"  # <-- Pon aquí tu API_KEY de Firebase
-email = "majitomule@gmail.com"       # <-- Pon aquí el email del usuario
-password = "Prueba123" # <-- Pon aquí la contraseña del usuario
+
+API_KEY = "AIzaSyB3pFGHqcsSiQJ95DF4rgXSQHiCRNQ6eCo"  
+email = "majitomule@gmail.com"    
+password = "Prueba123" 
 
 url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={API_KEY}"
 
